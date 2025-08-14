@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title> yay </title>
+<style>
+  :root {
+    --canvas-border: #8ff4e8;
+    --page-bg: #ffecc1;
+  }
+  body {
+    margin: 0;
+    background: var(--page-bg);
+    font-family: 'Press Start 2P', cursive;
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+  }
+  /* Keep internal canvas resolution fixed (logic unchanged),
+     but scale it up to fill most of the window smoothly. */
+  canvas {
+    width: min(95vw, 1200px);
+    height: auto;             /* preserves aspect ratio */
+    max-height: 88vh;         /* leave breathing room */
+    border: 4px solid var(--canvas-border);
+    display: block;
+    image-rendering: pixelated;
+    background: transparent;  /* we draw sky ourselves */
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0,0,0,0.5);
+    color: white;
+    font-size: clamp(18px, 3vw, 36px);
+    visibility: hidden;
+    text-align: center;
+  }
+  #overlay .box {
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid #fff;
+    padding: 16px 22px;
+    border-radius: 14px;
+    backdrop-filter: blur(4px);
+  }
+  #overlay button {
+    margin-top: 12px;
+    padding: 10px 18px;
+    font-family: inherit;
+    font-size: clamp(12px, 2vw, 16px);
+    cursor: pointer;
+    border-radius: 10px;
+    border: 2px solid #fff;
+    background: #f48fb1;
+    color: white;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+</style>
+</head>
+<body>
+  <!-- Internal resolution kept fixed; CSS scales it up -->
+  <canvas id="gameCanvas" width="800" height="300"></canvas>
+
+  <div id="overlay">
+    <div class="box">
+      <div id="message">GAME OVER</div>
+      <div style="margin-top:6px;font-size:0.6em;opacity:.9">Press R or click to restart</div>
+      <button id="restartBtn">Restart</button>
+    </div>
+  </div>
+
+<script>
+/* =========================
+   Setup & State
+========================= */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const message = document.getElementById('message');
+const restartBtn = document.getElementById('restartBtn');
+
+const W = canvas.width;   // 800 (fixed logic space)
+const H = canvas.height;  // 300
+const GROUND_Y = 250;
+
+let player = { x: 50, y: GROUND_Y - 40, width: 50, height: 60, dy: 0, jumping: false, invincible: false };
+let obstacles = [];
+let powerups = [];
+let billboards = []; // now floating speech bubbles
+let birds = [];
+let sparkles = [];
+let trees = [];
+let cake = null;
+let confetti = [];
+
+let gravity = 0.6;
+let score = 0;
+let speed = 4;
+let gameActive = false;
+let stage = 0;
+let t = 0; // time counter for bobbing/particles
+
+// Messages that appear as floating speech bubbles
+let stageMessages = [
+  "hey animesh :D",
+  "Stage 2 Message",
+  "Stage 3 Message",
+  "Stage 4 Message",
+  "Stage 5 Message",
+  "Stage 6 Message",
+  "Stage 7 Message",
+  "Stage 8 Message"
+];
+
+/* =========================
+   Parallax Background
+========================= */
+let clouds = [
+  { x: 100, y: 40, w: 50, h: 20 },
+  { x: 300, y: 60, w: 70, h: 25 },
+  { x: 600, y: 50, w: 60, h: 22 }
+];
+let mountains = [
+  { x: 0,   y: GROUND_Y - 60, w: 200, h: 100 },
+  { x: 300, y: GROUND_Y - 80, w: 250, h: 120 }
+];
+
+// Sun + sunset tracking
+let sunX = 700;
+let sunY = 50;
+let sunset = false;
+let sunsetProgress = 0; // 0 = day, 1 = full sunset
+
+/* =========================
+   Sprites / Placeholders
+========================= */
+const playerImg = new Image();
+playerImg.src = 'animini.png'; // replace if you have your avatar png
+
+const cakeImg = new Image();
+cakeImg.src = 'cake.png'; // replace with your cake png
+
+// Optional obstacle sprites (replace placeholders with URLs)
+const obstacleImgs = [
+  'cactus.png',
+  'cone.png'
+].map(src => { const img = new Image(); img.src = src; return img; });
+
+// Optional tree sprite (replace)
+const treeImg = new Image();
+treeImg.src = 'tree.png';
+
+/* =========================
+   Spawners
+========================= */
+function spawnObstacle() {
+  if (Math.random() < 0.5) return;
+  obstacles.push({
+    x: W,
+    y: GROUND_Y - 50,
+    width: 40,
+    height: 50,
+    sprite: Math.floor(Math.random() * obstacleImgs.length)
+  });
+}
+
+function spawnPowerup() {
+  if (Math.random() < 0.02) {
+    powerups.push({ x: W, y: GROUND_Y - 60, width: 20, height: 20, type: 'invincible' });
+  }
+}
+
+function spawnBillboard(text) {
+  // Float high in the sky, readable, gentle bobbing
+  billboards.push({
+    x: W + 60,
+    baseY: 60 + Math.random() * 40, // higher up
+    width: 180,
+    // auto height via draw; keep a baseline
+    text,
+    phase: Math.random() * Math.PI * 2 // for bobbing
+  });
+}
+
+function spawnCake() {
+  cake = { x: W + 600, y: GROUND_Y - 50, width: 100, height: 100 };
+}
+
+function spawnTree() {
+  trees.push({
+    x: W + Math.random() * 200,
+    y: GROUND_Y - 110,
+    width: 100, height: 120
+  });
+}
+
+function spawnBird() {
+  birds.push({
+    x: W + 20,
+    y: 40 + Math.random() * 60,
+    v: 0.6 + Math.random() * 0.6,
+    wing: Math.random() * Math.PI * 2
+  });
+}
+
+function spawnSparkle() {
+  sparkles.push({
+    x: Math.random() * W,
+    y: 40 + Math.random() * (GROUND_Y - 80),
+    life: 120 + Math.random() * 60
+  });
+}
+
+/* =========================
+   Reset / End
+========================= */
+function resetGame() {
+  player.y = GROUND_Y - player.height;
+  player.dy = 0;
+  player.jumping = false;
+  player.invincible = false;
+
+  obstacles = [];
+  powerups = [];
+  billboards = [];
+  birds = [];
+  sparkles = [];
+  trees = [];
+  cake = null;
+  confetti = [];
+
+  score = 0;
+  speed = 4;
+  stage = 0;
+  t = 0;
+
+  sunset = false;
+  sunsetProgress = 0;
+  sunX = 700;
+  sunY = 50;
+
+  gameActive = true;
+  overlay.style.visibility = 'hidden';
+}
+
+function gameOver() {
+  gameActive = false;
+  message.textContent = "GAME OVER,but you can always try again!<3";
+  overlay.style.visibility = 'visible';
+}
+
+function youWin() {
+  gameActive = false;
+  message.textContent = "🎉 YOU WIN! 🎉";
+  overlay.style.visibility = 'visible';
+
+  // confetti burst
+  for (let i = 0; i < 70; i++) {
+    confetti.push({
+      x: player.x + player.width / 2,
+      y: player.y,
+      dx: (Math.random() - 0.5) * 4,
+      dy: (Math.random() - 1) * 4,
+      color: `hsl(${Math.random() * 360},80%,60%)`
+    });
+  }
+}
+
+/* =========================
+   Drawing helpers
+========================= */
+function roundedRectPath(x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
+  // Fallback path if roundRect not supported
+  const rr = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+}
+
+/* =========================
+   Background & World
+========================= */
+function drawBackgroundGradient() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  if (!sunset) {
+    grad.addColorStop(0, '#ffeef8');
+    grad.addColorStop(1, '#fff8e1');
+  } else {
+    // smooth warm blend
+    grad.addColorStop(0, `rgb(${255 - 50*sunsetProgress}, ${200 - 60*sunsetProgress}, ${200 - 120*sunsetProgress})`);
+    grad.addColorStop(1, `rgb(${255 - 150*sunsetProgress}, ${200 - 100*sunsetProgress}, ${150 - 50*sunsetProgress})`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawSun() {
+  const r = Math.floor(255 - 100 * sunsetProgress);
+  const g = Math.floor(241 - 150 * sunsetProgress);
+  const b = Math.floor(118 - 80 * sunsetProgress);
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 30, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function updateSun() {
+  // gentle drift; ties to time so it always moves a bit
+  sunX -= 0.02;
+  sunY += 0.01;
+
+  if (stage >= 4) sunset = true;
+  if (sunset && sunsetProgress < 1) sunsetProgress += 0.0015;
+}
+
+function drawMountains() {
+  ctx.fillStyle = `rgb(${209 - 60*sunsetProgress}, ${196 - 80*sunsetProgress}, ${233 - 80*sunsetProgress})`;
+  mountains.forEach(m => {
+    ctx.beginPath();
+    ctx.moveTo(m.x, GROUND_Y);
+    ctx.lineTo(m.x + m.w / 2, m.y);
+    ctx.lineTo(m.x + m.w, GROUND_Y);
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+function drawHills() {
+  ctx.fillStyle = `rgb(${248 - 50*sunsetProgress}, ${187 - 50*sunsetProgress}, ${208 - 50*sunsetProgress})`;
+  ctx.beginPath(); ctx.arc(150, GROUND_Y, 100, Math.PI, 2 * Math.PI); ctx.fill();
+
+  ctx.fillStyle = `rgb(${244 - 60*sunsetProgress}, ${143 - 60*sunsetProgress}, ${177 - 60*sunsetProgress})`;
+  ctx.beginPath(); ctx.arc(400, GROUND_Y, 120, Math.PI, 2 * Math.PI); ctx.fill();
+
+  ctx.fillStyle = `rgb(${206 - 80*sunsetProgress}, ${147 - 80*sunsetProgress}, ${216 - 80*sunsetProgress})`;
+  ctx.beginPath(); ctx.arc(650, GROUND_Y, 90, Math.PI, 2 * Math.PI); ctx.fill();
+}
+
+function drawClouds() {
+  ctx.fillStyle = `rgb(${255 - 40*sunsetProgress}, ${255 - 80*sunsetProgress}, ${255 - 120*sunsetProgress})`;
+  clouds.forEach(cloud => {
+    ctx.beginPath();
+    ctx.ellipse(cloud.x, cloud.y, cloud.w, cloud.h, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function updateClouds() {
+  clouds.forEach(cloud => {
+    cloud.x -= 0.5;
+    if (cloud.x + cloud.w < 0) {
+      cloud.x = W + Math.random() * 100;
+      cloud.y = 40 + Math.random() * 40;
+    }
+  });
+}
+
+function drawGround() {
+  // solid ground (striping removed to keep tint clean)
+  ctx.fillStyle = `rgb(${200 - 50*sunsetProgress}, ${230 - 80*sunsetProgress}, ${200 - 80*sunsetProgress})`;
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+}
+
+function drawFlowers() {
+  for (let i = 0; i < W; i += 50) {
+    ctx.fillStyle = `rgb(${255 - 50*sunsetProgress}, ${128 - 50*sunsetProgress}, ${171 - 50*sunsetProgress})`;
+    ctx.beginPath(); ctx.arc(i + 5, GROUND_Y - 5, 3, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = `rgb(${255 - 60*sunsetProgress}, ${213 - 60*sunsetProgress}, ${79 - 60*sunsetProgress})`;
+    ctx.beginPath(); ctx.arc(i + 10, GROUND_Y - 5, 3, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawTrees() {
+  trees.forEach(t => {
+    if (!treeImg.src || treeImg.src.includes('PLACEHOLDER')) {
+      // simple placeholder
+      ctx.fillStyle = '#4caf50';
+      ctx.fillRect(t.x, t.y, t.width, t.height);
+      ctx.fillStyle = '#795548';
+      ctx.fillRect(t.x + t.width/2 - 4, t.y + t.height - 16, 8, 16);
+    } else {
+      ctx.drawImage(treeImg, t.x, t.y, t.width, t.height);
+    }
+  });
+}
+
+/* =========================
+   Foreground (Player, UI)
+========================= */
+function drawPlayer() {
+  if (player.invincible) ctx.globalAlpha = 0.7;
+  ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
+  ctx.globalAlpha = 1;
+}
+
+function drawObstacles() {
+  obstacles.forEach(o => {
+    const img = obstacleImgs[o.sprite];
+    if (!img || !img.src || img.src.includes('PLACEHOLDER')) {
+      ctx.fillStyle = `rgb(${255 - 60*sunsetProgress}, ${183 - 60*sunsetProgress}, ${77 - 60*sunsetProgress})`;
+      ctx.fillRect(o.x, o.y, o.width, o.height);
+    } else {
+      ctx.drawImage(img, o.x, o.y, o.width, o.height);
+    }
+  });
+}
+
+function drawPowerups() {
+  ctx.fillStyle = `rgb(${255 - 50*sunsetProgress}, ${128 - 50*sunsetProgress}, ${171 - 50*sunsetProgress})`;
+  powerups.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x + 10, p.y + 10, 10, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawSpeechBubble(x, y, text) {
+  // Make bubble size fit text
+  ctx.font = '12px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const paddingX = 12;
+  const paddingY = 8;
+  const textWidth = ctx.measureText(text).width;
+  const bw = Math.min(220, textWidth + paddingX * 2); // max width guard
+  const bh = 28;
+
+  const bx = x - bw / 2;
+  const by = y - bh / 2;
+
+  // bubble body (slightly translucent for airy feel)
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.fillStyle = '#fff';
+  roundedRectPath(bx, by, bw, bh, 10);
+  ctx.fill();
+  ctx.stroke();
+
+  // bubble tail
+  ctx.beginPath();
+  ctx.moveTo(x, by + bh);
+  ctx.lineTo(x - 6, by + bh + 10);
+  ctx.lineTo(x + 6, by + bh + 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // text
+  ctx.fillStyle = '#000';
+  ctx.fillText(text, x, y);
+}
+
+function drawBillboards() {
+  // render as floating speech bubbles, bobbing gently
+  billboards.forEach(b => {
+    const bob = Math.sin(t * 0.02 + b.phase) * 3;
+    drawSpeechBubble(b.x + b.width/2 - b.width/2, b.baseY + bob, b.text);
+  });
+}
+
+function drawCake() {
+  if (cake) ctx.drawImage(cakeImg, cake.x, cake.y, cake.width, cake.height);
+}
+
+function drawConfetti() {
+  confetti.forEach(c => {
+    ctx.fillStyle = c.color;
+    ctx.fillRect(c.x, c.y, 3, 3);
+    c.x += c.dx;
+    c.y += c.dy;
+    c.dy += 0.05;
+  });
+}
+
+/* =========================
+   Tiny Details (birds/sparkles)
+========================= */
+function drawBirds() {
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1;
+  birds.forEach(b => {
+    // simple "V" birds with wing flap
+    const flap = Math.sin(b.wing) * 3;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x + 8, b.y - flap);
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x + 8, b.y + flap);
+    ctx.stroke();
+  });
+}
+
+function drawSparkles() {
+  sparkles.forEach(s => {
+    ctx.globalAlpha = Math.max(0, s.life / 180);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(s.x, s.y, 2, 2);
+    ctx.globalAlpha = 1;
+  });
+}
+
+/* =========================
+   Full-screen Sunset Tint
+========================= */
+function applySunsetOverlay() {
+  if (sunsetProgress <= 0) return;
+  ctx.save();
+  // warm translucent overlay; increases with sunsetProgress
+  ctx.globalAlpha = 0.15 * sunsetProgress;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(255,140,80,1)');
+  grad.addColorStop(1, 'rgba(255,90,120,1)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+/* =========================
+   UPDATE
+========================= */
+function update() {
+  t++;
+
+  // background layers
+  updateSun();
+  updateClouds();
+
+  // gameplay off when overlay visible (but allow confetti)
+  if (!gameActive) return;
+
+  score++;
+
+  // Stage progression + spawn floating messages
+  if (stage < stageMessages.length && score % 600 === 0) {
+    spawnBillboard(stageMessages[stage]);
+    stage++;
+    speed += 0.3;
+    if (stage === stageMessages.length) spawnCake();
+  }
+
+  // Spawns (gameplay)
+  if (!cake && score % 60 === 0 && stage < stageMessages.length) spawnObstacle();
+  spawnPowerup();
+
+  // Decorative spawns (do not affect logic)
+  if (Math.random() < 0.005) spawnTree();
+  if (Math.random() < 0.01) spawnBird();
+  if (Math.random() < 1) spawnSparkle();
+
+  // Physics
+  player.y += player.dy;
+  if (player.y + player.height < GROUND_Y) {
+    player.dy += gravity;
+  } else {
+    player.y = GROUND_Y - player.height;
+    player.dy = 0;
+    player.jumping = false;
+  }
+
+  // Movement
+  obstacles.forEach(o => o.x -= speed);
+  powerups.forEach(p => p.x -= speed);
+  billboards.forEach(b => b.x -= speed * 0.6);  // slower drift for bubbles
+  trees.forEach(tr => tr.x -= speed * 0.5);     // parallax
+  birds.forEach(b => { b.x -= b.v; b.wing += 0.2; });
+  sparkles.forEach(s => s.life--);
+  if (cake) cake.x -= speed;
+
+  // Cleanup
+  obstacles = obstacles.filter(o => o.x + o.width > 0);
+  powerups = powerups.filter(p => p.x + p.width > 0);
+  billboards = billboards.filter(b => b.x + 200 > 0);
+  trees = trees.filter(tr => tr.x + tr.width > 0);
+  birds = birds.filter(b => b.x > -20);
+  sparkles = sparkles.filter(s => s.life > 0);
+
+  // Collisions
+  obstacles.forEach(o => {
+    if (!player.invincible &&
+        player.x < o.x + o.width &&
+        player.x + player.width > o.x &&
+        player.y < o.y + o.height &&
+        player.y + player.height > o.y) {
+      gameOver();
+    }
+  });
+
+  powerups.forEach((p, i) => {
+    if (player.x < p.x + p.width &&
+        player.x + player.width > p.x &&
+        player.y < p.y + p.height &&
+        player.y + player.height > p.y) {
+      player.invincible = true;
+      setTimeout(() => player.invincible = false, 3000);
+      powerups.splice(i, 1);
+    }
+  });
+
+  if (cake &&
+      player.x < cake.x + cake.width &&
+      player.x + player.width > cake.x &&
+      player.y < cake.y + cake.height &&
+      player.y + player.height > cake.y) {
+    youWin();
+  }
+}
+
+/* =========================
+   RENDER
+========================= */
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  drawBackgroundGradient();
+  drawSun();
+  drawMountains();
+  drawHills();
+  drawClouds();
+  drawTrees();
+  drawGround();
+  drawFlowers();
+
+  // Foreground + deco
+  drawBirds();
+  drawSparkles();
+
+  if (!gameActive) {
+    drawCake();
+    drawConfetti();
+    // Global tint still applies even when game over / win
+    applySunsetOverlay();
+    drawHUD();
+    return;
+  }
+
+  drawPlayer();
+  drawObstacles();
+  drawPowerups();
+  drawBillboards();
+  drawCake();
+
+  // Confetti if any (after player/objects)
+  drawConfetti();
+
+  // Apply warm full-screen tint during sunset (tints EVERYTHING)
+  applySunsetOverlay();
+
+  // HUD last
+  drawHUD();
+}
+
+function drawHUD() {
+  ctx.fillStyle = '#000';
+  ctx.font = '10px "Press Start 2P"';
+  ctx.textAlign = 'left';
+  ctx.fillText(`Score: ${score}`, 10, 18);
+  ctx.fillText(`Stage: ${stage+1}`, 10, 34);
+}
+
+/* =========================
+   LOOP
+========================= */
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* =========================
+   Controls
+========================= */
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !player.jumping && gameActive) {
+    player.dy = -12;
+    player.jumping = true;
+  }
+  if (e.code === 'KeyR') resetGame();
+});
+restartBtn.addEventListener('click', resetGame);
+overlay.addEventListener('click', resetGame);
+
+/* =========================
+   Start
+========================= */
+resetGame();
+loop();
+</script>
+</body>
+</html>
