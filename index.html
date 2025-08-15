@@ -105,25 +105,16 @@ let t = 0; // time counter for bobbing/particles
 
 // Messages that appear as floating speech bubbles
 let stageMessages = [
-  "hey animesh :D",
-  "HAPPY BIRTHDAYYYYYYYYY MY PRECIOUS",
-  "This could use a few tweaks but i'm very happy that this came out well",
-  "I wanted to do something special for you,lekin currently i can't take you on a cruise trip immediately so",
-  "I made this for you,I loved making this thinking about you every moment,I love you",
+  "heyyyyy animesh :D",
+  "I'm v happy this came out well(could be tweaked still)",
+  "I wanted to do something special for you",
+  "This is a small game I made in a few days",
+  "I hope it brings a smile to your face",
   "You inspire me a lot,thank you for being one of the best people I've ever met",
-  "Here's to another year of knowing you,I'm so excited and I hope we have so much fun together!",
-  "So excited to watch you grow more and more,Happy Birthday,my best friend and my jaan"
+  "Here's to another year of knowing you,I hope we have so much fun together!",
+  "So excited to watch you grow more and more,happy birthday my best friend and my jaan"
 ];
-// Background music
-const bgMusic = new Audio('music.mp3');
-bgMusic.loop = true; // repeat forever
-bgMusic.volume = 0.5; // volume from 0.0 to 1.0
-bgMusic.play().catch(() => {
-  // If autoplay is blocked, start on user click
-  window.addEventListener('click', () => {
-    bgMusic.play();
-  }, { once: true });
-});
+
 /* =========================
    Parallax Background
 ========================= */
@@ -257,7 +248,7 @@ function resetGame() {
 
 function gameOver() {
   gameActive = false;
-  message.textContent = "GAME OVER,but you can always try again!<3";
+  message.textContent = "GAME OVER,but you can always try again!";
   overlay.style.visibility = 'visible';
 }
 
