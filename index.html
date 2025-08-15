@@ -102,7 +102,16 @@ let speed = 4;
 let gameActive = false;
 let stage = 0;
 let t = 0; // time counter for bobbing/particles
-
+// Background music
+const bgMusic = new Audio('music.mp3');
+bgMusic.loop = true; // repeat forever
+bgMusic.volume = 0.5; // volume from 0.0 to 1.0
+bgMusic.play().catch(() => {
+  // If autoplay is blocked, start on user click
+  window.addEventListener('click', () => {
+    bgMusic.play();
+  }, { once: true });
+});
 // Messages that appear as floating speech bubbles
 let stageMessages = [
   "heyyyyy animesh :D",
